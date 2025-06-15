@@ -170,8 +170,11 @@ function setupSheet(spreadsheet, sheetName, headers) {
   // Set default text wrapping for new content (adjust as needed for specific columns)
   sheet.getRange(2, 1, sheet.getMaxRows(), sheet.getMaxColumns()).setWrapStrategy(SpreadsheetApp.WrapStrategy.WRAP);
 
-  // Optional: Set default row height for better spacing
-  sheet.setDefaultRowHeight(25);
+  // Optional: Set row heights for all rows for better spacing
+  const numRows = sheet.getMaxRows() - 1;
+  if (numRows > 0) {
+    sheet.setRowHeights(2, numRows, 25);
+  }
   
   // Format specific columns if it's the Budget sheet
   if (sheetName === BUDGET_SHEET_NAME) {
