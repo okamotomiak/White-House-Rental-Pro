@@ -27,6 +27,22 @@ const TENANTS_HEADERS = [
 ];
 
 /**
+ * Column index constants (1-based) for easier reference.
+ */
+const COL_ROOM_NUMBER = 1;
+const COL_RENTAL_PRICE = 2;
+const COL_NEGOTIATED_PRICE = 3;
+const COL_TENANT_NAME = 4;
+const COL_TENANT_EMAIL = 5;
+const COL_MOVE_IN_DATE = 6;
+const COL_SECURITY_DEPOSIT = 7;
+const COL_ROOM_STATUS = 8;
+const COL_LAST_PAYMENT = 9;
+const COL_PAYMENT_STATUS = 10;
+const COL_MOVE_OUT_PLANNED = 11;
+const COL_NOTES = 12;
+
+/**
  * Headers for the 'Budget' sheet.
  * Define these clearly to ensure consistency.
  */
@@ -39,6 +55,12 @@ const BUDGET_HEADERS = [
 ];
 
 /**
+ * Email address for the house manager (receives overdue alerts).
+ * Replace with the appropriate address for production use.
+ */
+const MANAGER_EMAIL = Session.getActiveUser().getEmail();
+
+/**
  * This function runs automatically when the spreadsheet is opened.
  * It creates a custom menu in the Google Sheet UI, making it easier
  * to access the script's functions.
@@ -46,9 +68,14 @@ const BUDGET_HEADERS = [
 function onOpen() {
   const ui = SpreadsheetApp.getUi();
   ui.createMenu('Parsonage Tools')
-      .addItem('Initialize/Format Sheets', 'initializeSheets') // New item to format sheets
+      .addItem('Initialize/Format Sheets', 'initializeSheets')
       .addSeparator()
       .addItem('Check Payment Status', 'checkAllPaymentStatus')
+      .addItem('Send Rent Reminders', 'sendRentReminders')
+      .addItem('Send Late Payment Alerts', 'sendLatePaymentAlerts')
+      .addItem('Send Monthly Invoices', 'sendMonthlyInvoices')
+      .addItem('Mark Selected Payment Received', 'markPaymentReceived')
+      .addSeparator()
       .addItem('Send Rent Reminders (Test)', 'sendRentRemindersTest')
       .addToUi();
 }
@@ -102,16 +129,14 @@ function setupSheet(spreadsheet, sheetName, headers) {
   headerRange.setValues([headers]);
 
   // Apply header formatting
-  headerRange.setFontWeight('bold'); // Make headers bold
-  headerRange.setBackground('#D9EAD3'); // Light green background for headers (aesthetically pleasing)
-  headerRange.setHorizontalAlignment('center'); // Center align headers
-  sheet.setFrozenRows(1); // Freeze the header row
+  headerRange.setFontWeight('bold');
+  headerRange.setBackground('#D9EAD3');
+  headerRange.setHorizontalAlignment('center');
+  sheet.setFrozenRows(1);
 
   // Adjust column widths for readability and aesthetics.
-  // This is a basic example; you might need to fine-tune these.
   for (let i = 1; i <= headers.length; i++) {
-    sheet.autoResizeColumn(i); // Auto-resize columns based on content
-    // Add a little extra width for padding or longer potential text
+    sheet.autoResizeColumn(i);
     sheet.setColumnWidth(i, sheet.getColumnWidth(i) + 20);
   }
 
@@ -125,27 +150,194 @@ function setupSheet(spreadsheet, sheetName, headers) {
   sheet.setDefaultRowHeight(25);
 }
 
-
 /**
- * A placeholder for checking all payment statuses.
- * This will be expanded later to read tenant data and update status.
+ * Checks payment status for all tenants and updates the sheet.
+ * Determines whether each tenant is Paid, Due, or Overdue based on
+ * the 'Last Payment Date' column.
  */
 function checkAllPaymentStatus() {
-  const ui = SpreadsheetApp.getUi();
-  ui.alert('Payment Status Check', 'Checking payment statuses now...', ui.ButtonSet.OK);
-  // --- Future logic to read tenant sheet and update status ---
-  // For now, just a confirmation.
-  ui.alert('Payment Status Check', 'Payment status check complete (placeholder).', ui.ButtonSet.OK);
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TENANTS_SHEET_NAME);
+  if (!sheet) return;
+
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return;
+
+  const dataRange = sheet.getRange(2, 1, lastRow - 1, TENANTS_HEADERS.length);
+  const data = dataRange.getValues();
+
+  const today = new Date();
+  const firstThisMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+  const firstLastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+
+  data.forEach(row => {
+    const roomStatus = row[COL_ROOM_STATUS - 1];
+    if (roomStatus !== 'Occupied') {
+      row[COL_PAYMENT_STATUS - 1] = '';
+      return;
+    }
+
+    const lastPayment = row[COL_LAST_PAYMENT - 1];
+    let status = 'Overdue';
+
+    if (lastPayment instanceof Date) {
+      if (lastPayment >= firstThisMonth) {
+        status = 'Paid';
+      } else if (lastPayment >= firstLastMonth) {
+        status = 'Due';
+      }
+    }
+
+    row[COL_PAYMENT_STATUS - 1] = status;
+  });
+
+  dataRange.setValues(data);
 }
 
 /**
- * A test function to demonstrate sending a rent reminder email.
- * This will be expanded later to target specific overdue tenants.
+ * Sends rent reminder emails to tenants with Due or Overdue status.
+ */
+function sendRentReminders() {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TENANTS_SHEET_NAME);
+  if (!sheet) return;
+
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) {
+    SpreadsheetApp.getUi().alert('No tenants found.');
+    return;
+  }
+
+  const dataRange = sheet.getRange(2, 1, lastRow - 1, TENANTS_HEADERS.length);
+  const data = dataRange.getValues();
+  const monthYear = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'MMMM yyyy');
+  let sent = 0;
+
+  data.forEach(row => {
+    const status = row[COL_PAYMENT_STATUS - 1];
+    const email = row[COL_TENANT_EMAIL - 1];
+    if ((status === 'Due' || status === 'Overdue') && email) {
+      const tenantName = row[COL_TENANT_NAME - 1];
+      const room = row[COL_ROOM_NUMBER - 1];
+      const rent = row[COL_NEGOTIATED_PRICE - 1] || row[COL_RENTAL_PRICE - 1];
+      const subject = `Rent Reminder - ${monthYear}`;
+      const body = `Dear ${tenantName},\n\n` +
+        `This is a friendly reminder that your rent of $${rent} for room ${room} is ${status.toLowerCase()} for ${monthYear}. ` +
+        `Please make your payment as soon as possible.\n\nThank you,\nParsonage Management`;
+      try {
+        MailApp.sendEmail(email, subject, body);
+        sent++;
+      } catch (e) {
+        console.error(`Failed to send reminder to ${email}: ${e.message}`);
+      }
+    }
+  });
+
+  SpreadsheetApp.getUi().alert(`Rent reminders sent: ${sent}`);
+}
+
+/**
+ * Sends an alert to the house manager listing tenants that are Overdue.
+ */
+function sendLatePaymentAlerts() {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TENANTS_SHEET_NAME);
+  if (!sheet) return;
+
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return;
+
+  const data = sheet.getRange(2, 1, lastRow - 1, TENANTS_HEADERS.length).getValues();
+  const overdueList = [];
+
+  data.forEach(row => {
+    if (row[COL_PAYMENT_STATUS - 1] === 'Overdue') {
+      const tenant = row[COL_TENANT_NAME - 1];
+      const email = row[COL_TENANT_EMAIL - 1];
+      const room = row[COL_ROOM_NUMBER - 1];
+      overdueList.push(`${tenant} (Room ${room}, ${email})`);
+    }
+  });
+
+  if (overdueList.length === 0) return;
+
+  const subject = 'Overdue Rent Alert';
+  const body = 'The following tenants are overdue on rent:\n\n' + overdueList.join('\n') + '\n\nPlease follow up accordingly.';
+  MailApp.sendEmail(MANAGER_EMAIL, subject, body);
+}
+
+/**
+ * Generates PDF invoices for all occupied rooms and emails them to tenants.
+ * Invoices are simple documents summarizing the amount due for the month.
+ */
+function sendMonthlyInvoices() {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TENANTS_SHEET_NAME);
+  if (!sheet) return;
+
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return;
+
+  const data = sheet.getRange(2, 1, lastRow - 1, TENANTS_HEADERS.length).getValues();
+  const monthYear = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'MMMM yyyy');
+
+  data.forEach(row => {
+    const status = row[COL_ROOM_STATUS - 1];
+    const email = row[COL_TENANT_EMAIL - 1];
+    if (status === 'Occupied' && email) {
+      const tenant = row[COL_TENANT_NAME - 1];
+      const room = row[COL_ROOM_NUMBER - 1];
+      const rent = row[COL_NEGOTIATED_PRICE - 1] || row[COL_RENTAL_PRICE - 1];
+
+      const doc = DocumentApp.create(`Rent Invoice - ${tenant} - ${monthYear}`);
+      const body = doc.getBody();
+      body.appendParagraph(`Rent Invoice - ${monthYear}`).setHeading(DocumentApp.ParagraphHeading.HEADING1);
+      body.appendParagraph(`Tenant: ${tenant}`);
+      body.appendParagraph(`Room: ${room}`);
+      body.appendParagraph(`Amount Due: $${rent}`);
+      body.appendParagraph('\nPlease remit payment at your earliest convenience.');
+      doc.saveAndClose();
+
+      const pdf = doc.getAs('application/pdf');
+      MailApp.sendEmail(email, `Rent Invoice - ${monthYear}`, `Please find attached your rent invoice for ${monthYear}.`, {attachments: [pdf]});
+      DriveApp.getFileById(doc.getId()).setTrashed(true); // Clean up temporary doc
+    }
+  });
+}
+
+/**
+ * Marks the currently selected tenant row as paid and logs the income
+ * in the Budget sheet.
+ */
+function markPaymentReceived() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getActiveSheet();
+  if (sheet.getName() !== TENANTS_SHEET_NAME) {
+    SpreadsheetApp.getUi().alert('Please select a row in the Tenants sheet.');
+    return;
+  }
+
+  const row = sheet.getActiveRange().getRow();
+  if (row <= 1) {
+    SpreadsheetApp.getUi().alert('Please select a tenant row.');
+    return;
+  }
+
+  const tenantName = sheet.getRange(row, COL_TENANT_NAME).getValue();
+  const rent = sheet.getRange(row, COL_NEGOTIATED_PRICE).getValue() || sheet.getRange(row, COL_RENTAL_PRICE).getValue();
+
+  sheet.getRange(row, COL_LAST_PAYMENT).setValue(new Date());
+  sheet.getRange(row, COL_PAYMENT_STATUS).setValue('Paid');
+
+  const budgetSheet = ss.getSheetByName(BUDGET_SHEET_NAME);
+  if (budgetSheet) {
+    budgetSheet.appendRow([new Date(), 'Rent Income', `Rent from ${tenantName}`, rent, 'Rent']);
+  }
+}
+
+/**
+ * A test function to demonstrate sending a rent reminder email to yourself.
  */
 function sendRentRemindersTest() {
-  const recipientEmail = Session.getActiveUser().getEmail(); // Sends to yourself for testing
+  const recipientEmail = Session.getActiveUser().getEmail();
   const subject = 'Rent Reminder - Parsonage (Test)';
-  const body = `Dear Tenant (Test),\n\nThis is a friendly reminder that your rent is due soon (or is overdue).\n\nPlease ensure your payment is made as soon as possible.\n\nThank you,\nParsonage Management`;
+  const body = 'This is a test rent reminder email.';
 
   try {
     MailApp.sendEmail(recipientEmail, subject, body);
@@ -156,10 +348,32 @@ function sendRentRemindersTest() {
   }
 }
 
-// Future functions to be added:
-// - Functions to read/update specific tenant data
-// - Logic for identifying overdue payments based on 'Last Payment Date' and current month
-// - Sending targeted overdue notices to house manager
-// - Generating and emailing PDF invoices
-// - Functions to handle Google Form submissions (requires separate triggers)
-// - More advanced budget analysis functions
+/**
+ * Triggered when the tenant application form is submitted.
+ * Sends a welcome email with basic information.
+ */
+function onTenantApplicationSubmit(e) {
+  const email = e.namedValues['Tenant Email'] ? e.namedValues['Tenant Email'][0] : '';
+  const name = e.namedValues['Name'] ? e.namedValues['Name'][0] : 'Applicant';
+  if (email) {
+    const subject = 'Application Received';
+    const body = `Dear ${name},\n\nThank you for your application. We will review it and get back to you shortly.\n\nRegards,\nParsonage Management`;
+    MailApp.sendEmail(email, subject, body);
+  }
+}
+
+/**
+ * Triggered when the move-out form is submitted. Sends move-out instructions.
+ */
+function onMoveOutRequestSubmit(e) {
+  const email = e.namedValues['Tenant Email'] ? e.namedValues['Tenant Email'][0] : '';
+  const name = e.namedValues['Tenant Name'] ? e.namedValues['Tenant Name'][0] : 'Tenant';
+  const moveOutDate = e.namedValues['Move-Out Date'] ? e.namedValues['Move-Out Date'][0] : '';
+  if (email) {
+    const subject = 'Move-Out Instructions';
+    const body = `Hello ${name},\n\nWe have recorded your planned move-out date of ${moveOutDate}. Please ensure the room is left in good condition.\n\nThank you,\nParsonage Management`;
+    MailApp.sendEmail(email, subject, body);
+  }
+}
+
+// End of core.gs
