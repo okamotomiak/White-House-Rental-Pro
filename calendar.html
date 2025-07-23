@@ -1,0 +1,108 @@
+const CALENDAR_HTML = `
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+    }
+    .calendar {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 5px;
+      margin-top: 20px;
+    }
+    .day {
+      border: 1px solid #ddd;
+      padding: 5px;
+      min-height: 60px;
+      font-size: 12px;
+    }
+    .day-header {
+      font-weight: bold;
+      text-align: center;
+      background-color: #f0f0f0;
+      padding: 10px;
+    }
+    .occupied {
+      background-color: #ffcccc;
+    }
+    .available {
+      background-color: #ccffcc;
+    }
+    .booking {
+      font-size: 10px;
+      margin: 2px 0;
+      padding: 2px;
+      background-color: #e0e0e0;
+      border-radius: 3px;
+    }
+    .legend {
+      margin-top: 20px;
+    }
+    .legend-item {
+      display: inline-block;
+      margin-right: 20px;
+    }
+    .legend-color {
+      display: inline-block;
+      width: 20px;
+      height: 20px;
+      margin-right: 5px;
+      vertical-align: middle;
+    }
+  </style>
+</head>
+<body>
+  <h3>Guest Room Occupancy Calendar</h3>
+  <div id="calendar" class="calendar"></div>
+  <div class="legend">
+    <div class="legend-item">
+      <span class="legend-color" style="background-color: #ffcccc;"></span>
+      Occupied
+    </div>
+    <div class="legend-item">
+      <span class="legend-color" style="background-color: #ccffcc;"></span>
+      Available
+    </div>
+  </div>
+  
+  <script>
+    // This would be populated with actual booking data
+    // For now, showing a sample calendar structure
+    function generateCalendar() {
+      const calendar = document.getElementById('calendar');
+      const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+      
+      // Add day headers
+      days.forEach(day => {
+        const header = document.createElement('div');
+        header.className = 'day-header';
+        header.textContent = day;
+        calendar.appendChild(header);
+      });
+      
+      // Add sample days
+      for (let i = 1; i <= 30; i++) {
+        const day = document.createElement('div');
+        day.className = 'day';
+        day.innerHTML = `<strong>${i}</strong>`;
+        
+        // Sample occupancy
+        if (i >= 10 && i <= 15) {
+          day.classList.add('occupied');
+          day.innerHTML += '<div class="booking">G1: John Doe</div>';
+        } else {
+          day.classList.add('available');
+        }
+        
+        calendar.appendChild(day);
+      }
+    }
+    
+    generateCalendar();
+  </script>
+</body>
+</html>
