@@ -1,3 +1,4 @@
+// GuestRoomCode.gs
 /**
  * Guest Room Management Enhancement for Parsonage Tenant Management System
  * This code adds short-term rental functionality to the existing system
