@@ -1,3 +1,5 @@
+// GuestRoomBudge.gs
+
 /**
  * Guest Room Pricing Strategy Helper
  * Add this to your Google Apps Script for dynamic pricing analysis
