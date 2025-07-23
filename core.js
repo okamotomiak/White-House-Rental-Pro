@@ -1,3 +1,5 @@
+// core.gs
+
 // Complete Parsonage Tenant Management System - Google Apps Script
 // This file contains all the code needed for the system
 
